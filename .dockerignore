@@ -1,0 +1,11 @@
+.git
+.env
+venv/
+.venv/
+__pycache__/
+topic_model_dir/
+*.ipynb
+quora_test
+logs
+report.html
+report.json

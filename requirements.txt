@@ -1,11 +1,7 @@
-sentence-transformers 
-bertopic 
-umap-learn 
-hdbscan 
-numpy
-python_dotenv
+python-dotenv
 azure-storage-blob
-panda
+pandas
 pytz
-ipywidgets
+pyyaml
 sendgrid
+openai

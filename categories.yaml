@@ -1,0 +1,112 @@
+# Topic categories for the weekly chatbot summary.
+#
+# Edit freely: add, rename, or remove categories. Each question gets exactly one
+# category; anything that fits none goes to "other" (built in, don't add it here).
+# The weekly email suggests new categories based on what lands in "other".
+#
+#   id          stable identifier used for week-over-week comparison. Changing an id
+#               breaks the comparison for that category for one week; prefer editing
+#               name/description instead.
+#   name        label shown in the email
+#   description guidance for the classifier: what belongs here (and what doesn't)
+
+categories:
+  - id: romans-13
+    name: Romans 13 & submitting to government
+    description: Romans 13, "render unto Caesar," 1 Peter 2, whether Christians must obey or support the state.
+
+  - id: jesus-kingdom-politics
+    name: Jesus, the Kingdom & politics
+    description: What Jesus and the New Testament teach about power, politics, the Kingdom of God, and how Christians should relate to rulers.
+
+  - id: old-testament-israel
+    name: Old Testament law, Israel & kings
+    description: Mosaic law, Israel's judges and kings, 1 Samuel 8, theocracy in the Old Testament, and how it applies today.
+
+  - id: church-state-religious-liberty
+    name: Church, state & religious liberty
+    description: Separation of church and state, religious freedom, government involvement in churches, Christian nationalism, theocracy today.
+
+  - id: libertarian-basics
+    name: Libertarian philosophy basics
+    description: What libertarianism is, non-aggression principle, self-ownership, property rights, natural law, how it fits with Christianity.
+
+  - id: objections-to-libertarianism
+    name: Objections & criticisms
+    description: Common objections ("libertarians are selfish," "who builds the roads," "libertarianism isn't biblical") and how to respond to critics or family.
+
+  - id: anarchism-statelessness
+    name: Anarchism & society without the state
+    description: Christian anarchism, anarcho-capitalism, minarchism vs. anarchy, private law and defense, how a stateless society would work.
+
+  - id: taxation
+    name: Taxation
+    description: Is taxation theft, paying taxes as a Christian, tax policy.
+
+  - id: economics-markets
+    name: Economics & free markets
+    description: Capitalism vs. socialism, Austrian economics, regulation, minimum wage, trade, business, property.
+
+  - id: money-inflation
+    name: Money, inflation & the Fed
+    description: Federal Reserve, inflation, sound money, gold, Bitcoin and crypto, debt.
+
+  - id: poverty-welfare-charity
+    name: Poverty, welfare & charity
+    description: Caring for the poor without the state, welfare programs, charity, the church's role in helping people.
+
+  - id: war-foreign-policy
+    name: War & foreign policy
+    description: Specific wars, military intervention, just war theory, the military, Israel/Middle East policy, foreign aid.
+
+  - id: pacifism-nonviolence
+    name: Pacifism, nonviolence & self-defense
+    description: Christian nonviolence, turning the other cheek, self-defense, guns and the Second Amendment.
+
+  - id: criminal-justice-police
+    name: Police, crime & criminal justice
+    description: Policing, prisons, the justice system, punishment, restitution, civil liberties and surveillance.
+
+  - id: drugs-vices
+    name: Drugs, vices & prohibition
+    description: Drug legalization, drug war, alcohol, gambling, prostitution, legislating morality in general.
+
+  - id: abortion-life
+    name: Abortion & life issues
+    description: Abortion, euthanasia, capital punishment, the state's role in protecting life.
+
+  - id: marriage-family-sexuality
+    name: Marriage, family & sexuality
+    description: Marriage and the state, LGBTQ issues, parental rights, family policy.
+
+  - id: education
+    name: Education & homeschooling
+    description: Public schools, homeschooling, school choice, what children are taught.
+
+  - id: immigration
+    name: Immigration & borders
+    description: Immigration policy, borders, refugees, deportation.
+
+  - id: health-mandates
+    name: Healthcare, public health & mandates
+    description: Healthcare policy, COVID, lockdowns, vaccine mandates, the FDA.
+
+  - id: voting-political-engagement
+    name: Voting & political engagement
+    description: Should Christians vote, which party or candidate, activism, political strategy, the Libertarian Party.
+
+  - id: current-events-figures
+    name: Current events & public figures
+    description: Specific news stories, politicians, elections, or public figures not covered by a more specific category.
+
+  - id: lci-resources
+    name: LCI & resource requests
+    description: Questions about LCI itself, its podcast, authors, events, or requests for book/article/podcast recommendations.
+
+  - id: general-faith-bible
+    name: General faith & Bible questions
+    description: Theology, Bible interpretation, or personal faith questions with no political angle.
+
+  - id: off-topic
+    name: Off-topic, test & chit-chat
+    description: Greetings, tests, gibberish, questions unrelated to faith, politics, or LCI.

@@ -1,0 +1,8 @@
+# Legacy: only needed for build.py and the topic_inference.ipynb notebook (BERTopic approach).
+# The weekly job uses requirements.txt.
+-r requirements.txt
+sentence-transformers
+bertopic
+umap-learn
+hdbscan
+numpy
