@@ -1,6 +1,6 @@
 """Write the weekly narrative summary from categorized questions using Azure OpenAI.
 
-The model returns JSON; HTML rendering happens in weekly_summary.py so model output
+The model returns JSON; HTML rendering happens in chatbot_summary.py so model output
 is always escaped before it goes into the email.
 """
 import json
@@ -11,8 +11,9 @@ DEPLOYMENT = os.getenv("OPENAI_SUMMARY_DEPLOYMENT", "gpt-4.1-mini")
 
 SYSTEM_PROMPT = """\
 You analyze questions that website visitors asked the Libertarian Christian Institute (LCI) \
-chatbot during one week. Each question was already assigned to a category. You get each \
-category's count, share, and sample questions, plus last week's counts per category when available. \
+chatbot during one reporting period (a month or a week). Each question was already assigned to a \
+category. You get each category's count, share, and sample questions, plus the previous period's \
+counts per category when available. \
 Samples from "other" are questions that fit no existing category.
 
 Write for LCI staff who produce articles, podcasts, and resources. Be concrete and brief. \
@@ -21,14 +22,14 @@ details (names, emails, phone numbers, addresses) even if a question contains th
 
 Return a JSON object with exactly these keys:
 {
-  "headline": "one sentence capturing the week",
+  "headline": "one sentence capturing the period",
   "themes": [{"title": str, "summary": "1-2 sentences", "example_questions": [str, ...up to 3]}],
-  "trends": ["notable change vs. last week", ...],
+  "trends": ["notable change vs. the previous period", ...],
   "notable_questions": ["question worth a closer look, verbatim or lightly trimmed", ...],
   "content_ideas": ["article/podcast idea grounded in what people asked", ...],
   "new_category_suggestions": [{"name": str, "reason": "what recurring 'other' questions it would cover"}]
 }
-Give 3-5 themes, up to 5 trends (empty list if no prior week provided; ignore tiny changes), \
+Give 3-5 themes, up to 5 trends (empty list if no previous period provided; ignore tiny changes), \
 up to 5 notable questions, 3-5 content ideas, and 0-3 new category suggestions (only if several \
 "other" questions share a clear theme)."""
 
@@ -44,12 +45,13 @@ def redact(text: str) -> str:
     return _LONG_NUM_RE.sub("[number]", text)
 
 
-def summarize_week(week_id: str, n_questions: int, categories: list[dict], prev_counts: dict | None) -> dict:
-    """categories: [{id, name, count, share, samples: [str]}]; prev_counts: {id: count} or None."""
+def summarize_period(label: str, n_questions: int, categories: list[dict], prev_counts: dict | None) -> dict:
+    """label: e.g. "October 2026"; categories: [{id, name, count, share, samples: [str]}];
+    prev_counts: {id: count} for the previous period, or None."""
     from llm_client import chat_json
 
     payload = {
-        "week": week_id,
+        "period": label,
         "total_questions": n_questions,
         "categories": categories,
         "previous_week_counts": prev_counts,

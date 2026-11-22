@@ -1,4 +1,4 @@
-# Image for the weekly summary Container Apps Job.
+# Image for the chatbot summary Container Apps Job (monthly by default; REPORT_PERIOD=week for weekly).
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -12,4 +12,4 @@ COPY *.py categories.yaml ./
 RUN useradd -m appuser
 USER appuser
 
-CMD ["python", "weekly_summary.py"]
+CMD ["python", "chatbot_summary.py"]

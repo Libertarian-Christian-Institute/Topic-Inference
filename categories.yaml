@@ -101,7 +101,7 @@ categories:
 
   - id: lci-resources
     name: LCI & resource requests
-    description: Questions about LCI itself, its podcast, authors, events, or requests for book/article/podcast recommendations.
+    description: Questions about LCI itself or people in its world (staff, podcast hosts, authors, guests, affiliated shows and writers, even if only a name is given), its podcast episodes, events, or requests for book/article/podcast recommendations.
 
   - id: general-faith-bible
     name: General faith & Bible questions
@@ -109,4 +109,4 @@ categories:
 
   - id: off-topic
     name: Off-topic, test & chit-chat
-    description: Greetings, tests, gibberish, questions unrelated to faith, politics, or LCI.
+    description: Greetings, tests, gibberish, questions unrelated to faith, politics, or LCI. A name or short phrase that refers to a person, show, or idea in the Christian/libertarian world is NOT off-topic.

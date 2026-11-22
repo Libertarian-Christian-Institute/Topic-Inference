@@ -1,17 +1,19 @@
-"""Weekly chatbot question summary.
+"""Chatbot question summary (monthly by default, or weekly).
 
 Runs as a scheduled Azure Container Apps Job:
 
-  1. Load logged questions from blob storage (chat-logs/logs) for the last full week.
+  1. Load logged questions from blob storage (chat-logs/logs) for the last full period
+     (calendar month, or Mon-Mon week), in Central time.
   2. Categorize each question against categories.yaml with Azure OpenAI.
   3. Ask Azure OpenAI for a narrative summary (themes, trends, content ideas).
-  4. Save the week's JSON (weekly-summaries/json/<week>.json) and the text log.
-  5. Email the HTML report via SendGrid.
+  4. Save the period's JSON (weekly-summaries/json/<period>.json) and the text log.
+  5. Email the HTML report via Azure Communication Services Email.
 
 Usage:
-  python weekly_summary.py                 # last full week, upload + email
-  python weekly_summary.py --dry-run       # write report.html/report.json locally, no upload/email
-  python weekly_summary.py --weeks-ago 1   # the week before last
+  python chatbot_summary.py                    # last full month, upload + email
+  python chatbot_summary.py --dry-run          # write report.html/report.json locally, no upload/email
+  python chatbot_summary.py --dry-run --ago 1  # the month before last
+  python chatbot_summary.py --period week      # weekly instead (or set REPORT_PERIOD=week)
 """
 import argparse
 import html
@@ -31,9 +33,11 @@ from dotenv import load_dotenv
 load_dotenv()  # no-op in the container; env vars come from the job config
 
 from classify import DEPLOYMENT as CLASSIFY_DEPLOYMENT, classify_questions, load_categories  # noqa: E402
-from llm_summary import DEPLOYMENT as SUMMARY_DEPLOYMENT, redact, summarize_week  # noqa: E402
+from llm_summary import DEPLOYMENT as SUMMARY_DEPLOYMENT, redact, summarize_period  # noqa: E402
 
-log = logging.getLogger("weekly_summary")
+log = logging.getLogger("chatbot_summary")
+
+PERIOD = os.getenv("REPORT_PERIOD", "month")  # "month" or "week"
 
 AZURE_CONN_STR = os.environ.get("AZURE_CSV_CONTAINER", "")
 DATA_CONTAINER = os.getenv("DATA_CONTAINER", "chat-logs")
@@ -47,21 +51,37 @@ SAMPLES_OTHER = int(os.getenv("SAMPLES_OTHER", "40"))
 
 
 # ---------------------------------------------------------------- time window
-def compute_week_window(tz_name=TZ_NAME, weeks_ago=0, now_utc=None):
-    """Monday 00:00 -> next Monday 00:00 (local time) of the last full week."""
+def _shift_month(d, months):
+    m = d.year * 12 + (d.month - 1) + months
+    return d.replace(year=m // 12, month=m % 12 + 1)
+
+
+def compute_window(period=PERIOD, ago=0, tz_name=TZ_NAME, now_utc=None):
+    """[start, end) in local time for the last full period, `ago` periods further back.
+    month: 1st 00:00 -> next 1st 00:00.  week: Monday 00:00 -> next Monday 00:00."""
     tz = pytz.timezone(tz_name)
     now_local = (now_utc or datetime.now(UTC)).astimezone(tz)
-    this_monday = (now_local - timedelta(days=now_local.isoweekday() - 1)).replace(
-        hour=0, minute=0, second=0, microsecond=0, tzinfo=None
-    )
-    end = tz.localize(this_monday - timedelta(weeks=weeks_ago))
-    start = tz.localize(this_monday - timedelta(weeks=weeks_ago + 1))
-    return start, end
+    midnight = now_local.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+    if period == "month":
+        this_first = midnight.replace(day=1)
+        start, end = _shift_month(this_first, -(ago + 1)), _shift_month(this_first, -ago)
+    elif period == "week":
+        this_monday = midnight - timedelta(days=now_local.isoweekday() - 1)
+        start, end = this_monday - timedelta(weeks=ago + 1), this_monday - timedelta(weeks=ago)
+    else:
+        raise ValueError(f"Unknown period {period!r}; use 'month' or 'week'")
+    return tz.localize(start), tz.localize(end)
 
 
-def iso_week_id(dt):
-    iso = dt.isocalendar()
+def period_id(period, start):
+    if period == "month":
+        return f"{start.year}-{start.month:02d}"
+    iso = start.isocalendar()
     return f"{iso.year}-W{iso.week:02d}"
+
+
+def period_label(period, start):
+    return start.strftime("%B %Y") if period == "month" else f"week {period_id(period, start)}"
 
 
 # ---------------------------------------------------------------- blob helpers
@@ -102,7 +122,7 @@ def append_text(container, name, text):
 
 
 # ---------------------------------------------------------------- data
-def load_week_questions(start, end):
+def load_questions(start, end):
     raw = read_blob(DATA_CONTAINER, DATA_BLOB_NAME)
     if not raw:
         raise RuntimeError(f"No question log found at {DATA_CONTAINER}/{DATA_BLOB_NAME}")
@@ -116,20 +136,20 @@ def load_week_questions(start, end):
         .str.strip()
     )
     local = df["time"].dt.tz_convert(TZ_NAME)
-    week = df.loc[(local >= start) & (local < end) & (df["question"] != "")].copy()
-    log.info("Loaded %d questions total, %d in window", len(df), len(week))
-    return week.reset_index(drop=True)
+    window = df.loc[(local >= start) & (local < end) & (df["question"] != "")].copy()
+    log.info("Loaded %d questions total, %d in window", len(df), len(window))
+    return window.reset_index(drop=True)
 
 
-def build_category_table(week_df, categories):
+def build_category_table(qdf, categories):
     names = {c["id"]: c["name"] for c in categories}
     names["unclassified"] = "Unclassified (classifier error)"
-    n = len(week_df)
+    n = len(qdf)
     table = []
-    for cid, cnt in week_df["category"].value_counts().items():
+    for cid, cnt in qdf["category"].value_counts().items():
         k = SAMPLES_OTHER if cid == "other" else SAMPLES_PER_CATEGORY
         samples = (
-            week_df.loc[week_df["category"] == cid, "question"]
+            qdf.loc[qdf["category"] == cid, "question"]
             .drop_duplicates()
             .sample(frac=1, random_state=42)
             .head(k)
@@ -140,8 +160,8 @@ def build_category_table(week_df, categories):
     return table
 
 
-def load_previous_counts(prev_week_id):
-    raw = read_blob(SUMMARY_CONTAINER, f"json/{prev_week_id}.json")
+def load_previous_counts(prev_id):
+    raw = read_blob(SUMMARY_CONTAINER, f"json/{prev_id}.json")
     if not raw:
         return None
     prev = json.loads(raw)
@@ -155,25 +175,30 @@ def _e(x):
     return html.escape(str(x))
 
 
-def _ul(items):
+def _ul(items, unit):
     if not items:
-        return "<p style='color:#666;'>None this week.</p>"
+        return f"<p style='color:#666;'>None this {unit}.</p>"
     return "<ul style='margin:4px 0 0 20px;padding:0;'>" + "".join(f"<li style='margin:4px 0;'>{_e(i)}</li>" for i in items) + "</ul>"
 
 
-def build_html(week_id, start, end, n_questions, table, llm, prev, flagged):
+def report_title(period, start):
+    return f"{'Monthly' if period == 'month' else 'Weekly'} Chatbot Summary — {period_label(period, start)}"
+
+
+def build_html(period, start, end, n_questions, table, llm, prev, flagged):
+    unit = period
     h3 = "style='margin:20px 0 6px;font-size:16px;'"
     parts = [
-        f"<h2 style='margin:0 0 6px;'>Weekly Chatbot Summary — {_e(week_id)}</h2>",
+        f"<h2 style='margin:0 0 6px;'>{_e(report_title(period, start))}</h2>",
         f"<p style='margin:0 0 12px;color:#444;'>{start:%b %d} – {(end - timedelta(days=1)):%b %d, %Y}"
         f" · <strong>{n_questions}</strong> questions"
-        + (f" (last week: {prev['n_questions']})" if prev else "")
+        + (f" (last {unit}: {prev['n_questions']})" if prev else "")
         + (f" · {flagged} flagged" if flagged is not None else "")
         + "</p>",
     ]
 
     if n_questions == 0:
-        parts.append("<p>No questions were logged this week.</p>")
+        parts.append(f"<p>No questions were logged this {unit}.</p>")
     else:
         if llm:
             parts.append(f"<p style='font-size:15px;margin:0 0 8px;'><strong>{_e(llm.get('headline', ''))}</strong></p>")
@@ -185,11 +210,11 @@ def build_html(week_id, start, end, n_questions, table, llm, prev, flagged):
                     f"<ul style='margin:0 0 0 20px;padding:0;font-size:13px;'>{ex}</ul>"
                 )
             if llm.get("trends"):
-                parts.append(f"<h3 {h3}>Changes vs. last week</h3>" + _ul(llm["trends"]))
-            parts.append(f"<h3 {h3}>Content ideas</h3>" + _ul(llm.get("content_ideas", [])))
-            parts.append(f"<h3 {h3}>Questions worth a look</h3>" + _ul(llm.get("notable_questions", [])))
+                parts.append(f"<h3 {h3}>Changes vs. last {unit}</h3>" + _ul(llm["trends"], unit))
+            parts.append(f"<h3 {h3}>Content ideas</h3>" + _ul(llm.get("content_ideas", []), unit))
+            parts.append(f"<h3 {h3}>Questions worth a look</h3>" + _ul(llm.get("notable_questions", []), unit))
         else:
-            parts.append("<p style='color:#a00;'>The AI summary failed this week; category counts are below.</p>")
+            parts.append(f"<p style='color:#a00;'>The AI summary failed this {unit}; category counts are below.</p>")
 
         prev_counts = (prev or {}).get("counts", {})
         cell = "style='padding:4px 8px;text-align:right;'"
@@ -211,7 +236,7 @@ def build_html(week_id, start, end, n_questions, table, llm, prev, flagged):
         if suggestions:
             parts.append(
                 f"<h3 {h3}>Suggested new categories</h3>"
-                + _ul([f"{s.get('name', '')} — {s.get('reason', '')}" for s in suggestions])
+                + _ul([f"{s.get('name', '')} — {s.get('reason', '')}" for s in suggestions], unit)
                 + "<p style='font-size:12px;color:#666;'>Add these to categories.yaml if they keep showing up.</p>"
             )
 
@@ -223,8 +248,8 @@ def build_html(week_id, start, end, n_questions, table, llm, prev, flagged):
     )
 
 
-def build_text(week_id, start, end, n_questions, table, llm):
-    lines = [f"Weekly Topic Summary — {week_id}", f"Window: {start.date()} to {end.date()}", f"Total messages: {n_questions}", ""]
+def build_text(period, start, end, n_questions, table, llm):
+    lines = [report_title(period, start), f"Window: {start.date()} to {end.date()}", f"Total messages: {n_questions}", ""]
     if llm and llm.get("headline"):
         lines += [llm["headline"], ""]
     lines.append("Questions by category:")
@@ -237,36 +262,41 @@ def build_text(week_id, start, end, n_questions, table, llm):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dry-run", action="store_true", help="write report.html/report.json locally; skip uploads and email")
-    ap.add_argument("--weeks-ago", type=int, default=0, help="0 = last full week")
+    ap.add_argument("--period", choices=["month", "week"], default=PERIOD, help="default: $REPORT_PERIOD or month")
+    ap.add_argument("--ago", type=int, default=0, help="0 = last full period, 1 = the one before, ...")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    logging.getLogger("azure").setLevel(logging.WARNING)  # Azure SDK dumps full request/response headers at INFO
 
     if not AZURE_CONN_STR:
         sys.exit("AZURE_CSV_CONTAINER is not set")
 
     categories = load_categories()
-    start, end = compute_week_window(weeks_ago=args.weeks_ago)
-    week_id = iso_week_id(start)
-    log.info("Summarizing %s (%s to %s)", week_id, start.isoformat(), end.isoformat())
+    period = args.period
+    start, end = compute_window(period, args.ago)
+    run_id = period_id(period, start)
+    prev_id = period_id(period, compute_window(period, args.ago + 1)[0])
+    log.info("Summarizing %s (%s to %s)", run_id, start.isoformat(), end.isoformat())
 
-    week_df = load_week_questions(start, end)
-    n = len(week_df)
-    flagged = int(week_df["flagged"].fillna(False).astype(bool).sum()) if "flagged" in week_df else None
+    qdf = load_questions(start, end)
+    n = len(qdf)
+    flagged = int(qdf["flagged"].eq(True).sum()) if "flagged" in qdf else None
 
     table, llm, prev = [], None, None
     if n:
-        week_df["category"] = classify_questions(week_df["question"].tolist(), categories)
-        table = build_category_table(week_df, categories)
-        prev = load_previous_counts(iso_week_id(start - timedelta(weeks=1)))
+        qdf["category"] = classify_questions(qdf["question"].tolist(), categories)
+        table = build_category_table(qdf, categories)
+        prev = load_previous_counts(prev_id)
         try:
-            llm = summarize_week(week_id, n, table, prev["counts"] if prev else None)
+            llm = summarize_period(period_label(period, start), n, table, prev["counts"] if prev else None)
         except Exception:
             log.exception("LLM summary failed; sending counts only")
 
     record = {
-        "run_id": week_id,
-        "week_start": start.date().isoformat(),
-        "week_end": end.date().isoformat(),
+        "run_id": run_id,
+        "period": period,
+        "period_start": start.date().isoformat(),
+        "period_end": end.date().isoformat(),
         "generated_at": datetime.now(UTC).isoformat(),
         "n_questions": n,
         "flagged": flagged,
@@ -275,8 +305,8 @@ def main():
         "method": {"classifier": CLASSIFY_DEPLOYMENT, "summarizer": SUMMARY_DEPLOYMENT},
     }
 
-    report_html = build_html(week_id, start, end, n, table, llm, prev, flagged)
-    report_text = build_text(week_id, start, end, n, table, llm)
+    report_html = build_html(period, start, end, n, table, llm, prev, flagged)
+    report_text = build_text(period, start, end, n, table, llm)
 
     if args.dry_run:
         with open("report.html", "w", encoding="utf-8") as f:
@@ -286,11 +316,11 @@ def main():
         log.info("Dry run: wrote report.html and report.json")
         return
 
-    upload_json(SUMMARY_CONTAINER, f"json/{week_id}.json", record)
+    upload_json(SUMMARY_CONTAINER, f"json/{run_id}.json", record)
     append_text(SUMMARY_CONTAINER, SUMMARY_TEXT_BLOB, report_text)
 
     from send_email import send_email
-    send_email(report_html, subject=f"Weekly Chatbot Summary — {week_id}")
+    send_email(report_html, subject=report_title(period, start), text=report_text)
     log.info("Done")
 
 
